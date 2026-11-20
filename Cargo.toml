@@ -9,16 +9,16 @@ default = []
 integration_tests = []
 
 [dependencies]
-models = { path = "../models" }
+models = { git = "https://github.com/F1R3FLY-io/f1r3node-rust.git", rev = "0ccc315d84b32d668e8db49cd56ba3c576693e15" }
 
 blake2 = "0.10.6"
 clap = { version = "4", features = ["derive", "env"] }
-hex = { workspace = true }
-node_cli = { git = "https://github.com/F1R3FLY-io/rust-client.git", branch = "dev" }
-prost = { workspace = true }
-rand = { workspace = true }
+hex = "0.4"
+node_cli = { git = "https://github.com/F1R3FLY-io/rust-client.git", rev = "9292f5433b4d727d9a226f2f5766dfd088e14948" }
+prost = "0.14"
+rand = "0.9"
 secp256k1 = { version = "0.31.1", features = ["rand", "serde"] }
-thiserror = { workspace = true }
-tokio = { workspace = true }
+thiserror = "2.0"
+tokio = { version = "1", features = ["full"] }
 typenum = "1.16.0"
 uuid = { version = "1", features = ["v4"] }

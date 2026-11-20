@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The f1r3node-rust revision that supplies docker/ for the shard, and the
+  # node image the shard runs. Pin both to the same revision once the identity
+  # registry contract is on f1r3node-rust dev.
+  F1R3NODE_REF: dev
+  F1R3FLY_RUST_IMAGE: f1r3flyindustries/f1r3fly-rust:dev
+
+jobs:
+  check:
+    name: Format, Clippy and Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: nightly-2026-02-09
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --features integration_tests --locked -- -D warnings
+      - run: cargo test --locked
+
+  integration:
+    name: Integration Tests (Docker Shard)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      F1R3NODE_DIR: ${{ github.workspace }}/f1r3node-rust
+      QUORUM_CONF: ${{ github.workspace }}/docker/quorum.conf
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Check out the f1r3node-rust shard files
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          repository: F1R3FLY-io/f1r3node-rust
+          ref: ${{ env.F1R3NODE_REF }}
+          path: f1r3node-rust
+          sparse-checkout: docker
+          persist-credentials: false
+
+      - name: Start shard
+        run: |
+          cp "$F1R3NODE_DIR/docker/.env.example" "$F1R3NODE_DIR/docker/.env"
+          docker compose -f "$F1R3NODE_DIR/docker/shard.yml" -f "$F1R3NODE_DIR/docker/ci-ports.shard.yml" \
+            -f docker/quorum.yml up -d
+
+      # Compiles while the shard boots.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: nightly-2026-02-09
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Build tests
+        run: cargo test --locked --features integration_tests --test identity_registry --no-run
+
+      - name: Wait for 10 finalized blocks on bootstrap
+        run: |
+          for i in $(seq 1 60); do
+            LFB=$(curl -sf http://localhost:14403/api/last-finalized-block | jq -r '.blockInfo.blockNumber // 0')
+            LFB=${LFB:-0}
+            echo "  [$((i*5))s] LFB: #$LFB"
+            [ "$LFB" -ge 10 ] && exit 0
+            sleep 5
+          done
+          echo "FAIL: LFB only at #$LFB after 300s"
+          exit 1
+
+      # The deploy signer is the public bootstrap dev key from docker/.env.example.
+      - name: Run identity registry tests
+        env:
+          F1R3FLY_GRPC_PORT: "14422"
+          F1R3FLY_SIGNING_KEY: 5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
+        run: cargo test --locked --features integration_tests --test identity_registry -- --test-threads=1
+
+      - name: Collect logs
+        if: always()
+        shell: bash {0}
+        run: |
+          mkdir -p /tmp/logs
+          docker ps -a > /tmp/logs/containers.txt 2>&1 || true
+          for c in $(docker ps -aq --filter "name=rnode" 2>/dev/null); do
+            name=$(docker inspect --format '{{.Name}}' "$c" | sed 's|^/||')
+            docker logs "$c" > "/tmp/logs/${name}.log" 2>&1 || true
+          done
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: identity-registry-logs
+          path: /tmp/logs/
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        shell: bash {0}
+        run: |
+          docker compose -f "$F1R3NODE_DIR/docker/shard.yml" -f "$F1R3NODE_DIR/docker/ci-ports.shard.yml" \
+            -f docker/quorum.yml down -v

@@ -1,19 +1,23 @@
 .PHONY: firefly clear-firefly build test \
         register rotate admin-relink admin-sign resolve-current resolve-history keygen
 
-SHARD := F1R3FLY_RUST_IMAGE=f1r3fly-rust:local docker compose -f ../docker/shard.yml -f docker/quorum.yml
+F1R3NODE_DIR ?= ../f1r3node-rust
+F1R3FLY_RUST_IMAGE ?= f1r3fly-rust:local
+SHARD := F1R3FLY_RUST_IMAGE=$(F1R3FLY_RUST_IMAGE) QUORUM_CONF=$(CURDIR)/docker/quorum.conf \
+	docker compose -f $(F1R3NODE_DIR)/docker/shard.yml -f docker/quorum.yml
 
-# Spin up a local F1r3fly shard via the workspace's docker compose, from an
-# image built from this checkout. The docker/quorum.yml overlay sets a 2-of-3
-# identity registry admin quorum. Copies docker/.env from the shipped example
-# on first run.
+# Spin up a local F1r3fly shard via the docker compose of the f1r3node-rust
+# checkout in F1R3NODE_DIR. Unless F1R3FLY_RUST_IMAGE names another image, the
+# shard runs f1r3fly-rust:local, built from that checkout. The docker/quorum.yml
+# overlay sets a 2-of-3 identity registry admin quorum. Copies docker/.env from
+# the shipped example on first run.
 firefly:
-	@if [ ! -f ../docker/.env ] && [ -f ../docker/.env.example ]; then \
-		cp ../docker/.env.example ../docker/.env; \
+	@if [ ! -f $(F1R3NODE_DIR)/docker/.env ] && [ -f $(F1R3NODE_DIR)/docker/.env.example ]; then \
+		cp $(F1R3NODE_DIR)/docker/.env.example $(F1R3NODE_DIR)/docker/.env; \
 	fi
-	@if ! docker image inspect f1r3fly-rust:local >/dev/null 2>&1; then \
+	@if ! docker image inspect $(F1R3FLY_RUST_IMAGE) >/dev/null 2>&1; then \
 		echo "Building f1r3fly-rust:local..."; \
-		cd .. && bash ./node/docker-commands.sh build-local; \
+		cd $(F1R3NODE_DIR) && bash ./node/docker-commands.sh build-local; \
 	fi
 	$(SHARD) up
 
@@ -25,7 +29,7 @@ firefly:
 # again. Run between test campaigns when deploys pile up.
 clear-firefly:
 	$(SHARD) down -v
-	-docker image rm f1r3fly-rust:local
+	-docker image rm $(F1R3FLY_RUST_IMAGE)
 
 build:
 	cargo build --release

@@ -1,8 +1,9 @@
-# Overlay for docker/shard.yml. Paths resolve against docker/.
+# Overlay for docker/shard.yml of f1r3node-rust. Relative paths resolve against
+# that docker/ directory. The Makefile sets QUORUM_CONF to docker/quorum.conf.
 x-quorum-conf: &quorum-conf
   volumes:
     - ./conf/default.conf:/var/lib/rnode/default.conf
-    - ../identity-registry/docker/quorum.conf:/var/lib/rnode/rnode.conf
+    - ${QUORUM_CONF:?set QUORUM_CONF to the path of docker/quorum.conf}:/var/lib/rnode/rnode.conf
 
 services:
   boot: *quorum-conf
